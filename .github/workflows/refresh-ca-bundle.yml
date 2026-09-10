@@ -1,0 +1,44 @@
+name: refresh-ca-bundle
+on:
+  schedule:
+    # Weekly, not monthly: this file is a TLS trust store, and the risk
+    # that matters most is a distrusted/revoked CA lingering in it, not
+    # routine additions. The check itself is a single request + diff -
+    # cheap enough that "weekly" costs nothing extra when there's no
+    # change to pick up, and it means a real revocation lands here in
+    # days, not the better part of a month.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Refresh CA bundle
+        run: sh scripts/refresh-ca-bundle.sh
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet -- scripts/ca-certificates.crt; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: refresh CA trust bundle from curl.se"
+          title: "chore: refresh CA trust bundle"
+          body: |
+            Automated weekly refresh from curl.se's Mozilla root-store
+            mirror (`scripts/refresh-ca-bundle.sh`). Review the diff before
+            merging, same as any dependency bump - this file is what lets
+            JetKVM verify the management server's TLS certificate, since
+            the device ships with no CA trust store of its own.
+          branch: refresh-ca-bundle
+          delete-branch: true
